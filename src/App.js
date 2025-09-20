@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -72,7 +72,7 @@ const Navbar = ({ activePage, setActivePage, username, onLogout }) => {
 };
 
 // New component for visualizing multiple currency rates
-const CurrencyComparisonChart = ({ selectedBaseCurrency, exchangeRates }) => {
+const CurrencyComparisonChart = ({ selectedBaseCurrency, exchangeRates, setSelectedBaseCurrency, socket }) => {
     const labels = Object.keys(exchangeRates);
     const chartData = {
         labels: labels,
@@ -109,7 +109,25 @@ const CurrencyComparisonChart = ({ selectedBaseCurrency, exchangeRates }) => {
 
     return (
         <div className="p-6 bg-gray-800 rounded-lg shadow-xl border border-gray-700">
-            <h2 className="text-xl font-semibold mb-4 text-green-400">Currency Exchange Rates</h2>
+            <h2 className="text-xl font-semibold mb-4 text-green-400">All Currency Exchange Rates</h2>
+            <div className="flex items-center space-x-4 mb-4">
+                <label className="block text-sm font-medium text-gray-300">Base Currency</label>
+                <select
+                    className="rounded-md bg-gray-700 border-gray-600 text-white shadow-sm focus:border-green-500 focus:ring-green-500"
+                    value={selectedBaseCurrency}
+                    onChange={(e) => {
+                      setSelectedBaseCurrency(e.target.value);
+                      // Request new data from the backend when currency changes
+                      if (socket) {
+                        socket.emit('request_latest_rates', e.target.value);
+                      }
+                    }}
+                >
+                    {['USD', 'EUR', 'GBP', 'JPY', 'INR', 'CAD'].map(currency => (
+                        <option key={currency} value={currency}>{currency}</option>
+                    ))}
+                </select>
+            </div>
             <div className="h-96">
                 <Line data={chartData} options={chartOptions} />
             </div>
@@ -127,10 +145,12 @@ const TradingDashboard = ({
   setIsAutoTradeActive,
   onPlaceOrder,
   totalVolume,
-  notification,
   exchangeRates,
   selectedBaseCurrency,
-  setSelectedBaseCurrency
+  setSelectedBaseCurrency,
+  socket,
+  isDataReady,
+  wallet
 }) => {
   const [orderQuantity, setOrderQuantity] = useState(1);
   const [currencyPair, setCurrencyPair] = useState('USD/INR');
@@ -244,35 +264,48 @@ const TradingDashboard = ({
             <div className="flex space-x-4">
               <motion.button
                 onClick={() => handlePlaceOrder('Buy')}
-                className="flex-1 py-3 px-4 rounded-lg font-bold bg-green-600 text-white hover:bg-green-700 transition-colors duration-200"
+                className="flex-1 py-3 px-4 rounded-lg font-bold bg-green-600 text-white transition-colors duration-200"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
+                disabled={!isDataReady}
               >
                 Buy
               </motion.button>
               <motion.button
                 onClick={() => handlePlaceOrder('Sell')}
-                className="flex-1 py-3 px-4 rounded-lg font-bold bg-red-600 text-white hover:bg-red-700 transition-colors duration-200"
+                className="flex-1 py-3 px-4 rounded-lg font-bold bg-red-600 text-white transition-colors duration-200"
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
+                disabled={!isDataReady}
               >
                 Sell
               </motion.button>
             </div>
             <motion.button
-              onClick={() => setIsAutoTradeActive(!isAutoTradeActive)}
-              className={`w-full py-3 px-4 rounded-lg font-bold transition-colors duration-200 ${
-                isAutoTradeActive
-                  ? 'bg-yellow-600 text-white hover:bg-yellow-700'
-                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
-              }`}
+              className="w-full py-3 px-4 rounded-lg font-bold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors duration-200"
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              {isAutoTradeActive ? 'Stop Auto-Trade' : 'Start Auto-Trade'}
+              Start Auto-Trade
             </motion.button>
             <div className="mt-4 text-center text-sm font-medium text-gray-400">
               Total Auto-Trade Volume: ${totalVolume.toLocaleString()} / ${volumeLimit.toLocaleString()}
+            </div>
+            {!isDataReady && (
+              <div className="text-center text-sm text-yellow-400 mt-2">
+                Loading live data... Please wait.
+              </div>
+            )}
+          </div>
+          <div className="mt-6">
+            <h3 className="text-lg font-semibold text-green-400 mb-2">Wallet</h3>
+            <div className="grid grid-cols-2 gap-4">
+                {Object.keys(wallet).map(currency => (
+                    <div key={currency} className="bg-gray-700 p-3 rounded-lg flex justify-between items-center">
+                        <span className="text-gray-300">{currency}</span>
+                        <span className="font-bold text-white">${wallet[currency].toFixed(2)}</span>
+                    </div>
+                ))}
             </div>
           </div>
         </div>
@@ -286,14 +319,20 @@ const TradingDashboard = ({
               <select
                   className="rounded-md bg-gray-700 border-gray-600 text-white shadow-sm focus:border-green-500 focus:ring-green-500"
                   value={selectedBaseCurrency}
-                  onChange={(e) => setSelectedBaseCurrency(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedBaseCurrency(e.target.value);
+                    // Request new data from the backend when currency changes
+                    if (socket) {
+                      socket.emit('request_latest_rates', e.target.value);
+                    }
+                  }}
               >
                   {['USD', 'EUR', 'GBP', 'JPY', 'INR', 'CAD'].map(currency => (
-                      <option key={currency} value={currency}>{currency}</option>
+                        <option key={currency} value={currency}>{currency}</option>
                   ))}
               </select>
           </div>
-          <CurrencyComparisonChart selectedBaseCurrency={selectedBaseCurrency} exchangeRates={exchangeRates} />
+          <CurrencyComparisonChart selectedBaseCurrency={selectedBaseCurrency} exchangeRates={exchangeRates} setSelectedBaseCurrency={setSelectedBaseCurrency} socket={socket} />
       </div>
 
       {/* Trade Blotter */}
@@ -409,7 +448,7 @@ const HistoryPage = ({ trades }) => {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="7" className="text-center py-8 text-gray-400">No trades found.</td>
+                  <td colSpan="7" className="text-center py-8 text-gray-400">No trades executed yet.</td>
                 </tr>
               )}
             </tbody>
@@ -483,7 +522,21 @@ const AnalyticsPage = ({ trades }) => {
     );
 };
 
-const SettingsPage = ({ volumeLimit, setVolumeLimit, dataRefreshInterval, setDataRefreshInterval }) => {
+const SettingsPage = ({ volumeLimit, setVolumeLimit, setDataRefreshInterval }) => {
+  const [refreshInterval, setRefreshInterval] = useState(60);
+
+  useEffect(() => {
+    setRefreshInterval(15000 / 1000);
+  }, []);
+
+  const handleRefreshIntervalChange = (e) => {
+    const value = Number(e.target.value);
+    if (!isNaN(value) && value > 0) {
+      setRefreshInterval(value);
+      setDataRefreshInterval(value * 1000);
+    }
+  };
+
   return (
     <div className="p-8 text-white min-h-screen bg-gray-900">
       <h1 className="text-3xl font-bold text-green-400 mb-6">Settings</h1>
@@ -505,8 +558,8 @@ const SettingsPage = ({ volumeLimit, setVolumeLimit, dataRefreshInterval, setDat
             <label className="block text-sm font-medium text-gray-300 mb-1">Data Refresh Interval (seconds)</label>
             <input
               type="number"
-              value={dataRefreshInterval / 1000}
-              onChange={(e) => setDataRefreshInterval(Number(e.target.value) * 1000)}
+              value={refreshInterval}
+              onChange={handleRefreshIntervalChange}
               className="mt-1 block w-full rounded-md bg-gray-700 border-gray-600 text-white shadow-sm focus:border-green-500 focus:ring-green-500"
               min="1"
             />
@@ -557,7 +610,7 @@ const LoginPage = ({ onLoginSuccess, setNotification }) => {
     setIsLoading(true);
     const endpoint = isLogin ? '/api/login' : '/api/signup';
     try {
-      const response = await fetch(`http://localhost:3000${endpoint}`, {
+      const response = await fetch(`http://localhost:5000${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -646,66 +699,43 @@ const App = () => {
   const [trades, setTrades] = useState([]);
   const [totalVolume, setTotalVolume] = useState(0);
   const [volumeLimit, setVolumeLimit] = useState(10000000);
-  const [isAutoTradeActive, setIsAutoTradeActive] = useState(false);
-  const [dataRefreshInterval, setDataRefreshInterval] = useState(3000);
   const [notification, setNotification] = useState('');
-
+  const [isDataReady, setIsDataReady] = useState(false);
+  const [wallet, setWallet] = useState({});
   const [socket, setSocket] = useState(null);
   
   // Trading logic state
   const smaPeriod = 14;
   const smaHistory = liveData.slice(-smaPeriod);
-  const sma = smaHistory.length === smaPeriod
-    ? [{ rate: smaHistory.reduce((sum, d) => sum + d.rate, 0) / smaPeriod }]
-    : [];
+  const sma = useMemo(() => {
+    return smaHistory.length === smaPeriod
+      ? [{ rate: smaHistory.reduce((sum, d) => sum + d.rate, 0) / smaPeriod }]
+      : [];
+  }, [smaHistory, smaPeriod]);
 
   const bollingerPeriod = 20;
   const bollingerHistory = liveData.slice(-bollingerPeriod);
-  const bollinger = bollingerHistory.length === bollingerPeriod ? (() => {
-    const prices = bollingerHistory.map(d => d.rate);
-    const mean = prices.reduce((sum, p) => sum + p, 0) / bollingerPeriod;
-    const stdDev = Math.sqrt(prices.reduce((sum, p) => sum + (p - mean) ** 2, 0) / bollingerPeriod);
-    return [{
-      upper: mean + (2 * stdDev),
-      lower: mean - (2 * stdDev)
-    }];
-  })() : [{ upper: 0, lower: 0 }];
+  const bollinger = useMemo(() => {
+    return bollingerHistory.length === bollingerPeriod ? (() => {
+      const prices = bollingerHistory.map(d => d.rate);
+      const mean = prices.reduce((sum, p) => sum + p, 0) / bollingerPeriod;
+      const stdDev = Math.sqrt(prices.reduce((sum, p) => sum + (p - mean) ** 2, 0) / bollingerPeriod);
+      return [{
+        upper: mean + (2 * stdDev),
+        lower: mean - (2 * stdDev)
+      }];
+    })() : [{ upper: 0, lower: 0 }];
+  }, [bollingerHistory, bollingerPeriod]);
 
-  // Auth check on load
-  useEffect(() => {
+  const fetchTrades = useCallback(async () => {
     const token = localStorage.getItem('token');
-    const storedUsername = localStorage.getItem('username');
-    if (token && storedUsername) {
-      setIsAuthenticated(true);
-      setUsername(storedUsername);
+    if (!token) {
+        setNotification('Authentication failed. Please log in again.');
+        return;
     }
-  }, []);
-
-  const handleLoginSuccess = (user) => {
-    setIsAuthenticated(true);
-    setUsername(user);
-    localStorage.setItem('username', user);
-    setNotification('Login successful!');
-  };
-
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setUsername(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('username');
-    if (socket) {
-      socket.disconnect();
-    }
-    setNotification('Logged out successfully.');
-  };
-
-  // Fetching data from the backend
-  const fetchTrades = async () => {
-    const token = localStorage.getItem('token');
-    if (!token) return;
 
     try {
-        const response = await fetch('http://localhost:3000/api/trades', {
+        const response = await fetch('http://localhost:5000/api/trades', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await response.json();
@@ -718,84 +748,29 @@ const App = () => {
         console.error("Error fetching trades:", e);
         setNotification('Failed to fetch trades from backend. Please log in again.');
     }
-  };
-  
-  const fetchAnalytics = async () => {
+  }, [setNotification, setTrades, setTotalVolume]);
+
+  const fetchWallet = useCallback(async () => {
     const token = localStorage.getItem('token');
-    if (!token) return;
+    if (!token) {
+        // If no token exists, the user is not authenticated.
+        // Don't log an error, just return.
+        return;
+    }
 
     try {
-        const response = await fetch('http://localhost:3000/api/analytics', {
+        const response = await fetch('http://localhost:5000/api/wallet', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
         const data = await response.json();
-        // The analytics data will be used to update the AnalyticsPage
+        setWallet(data);
     } catch (e) {
-        console.error("Error fetching analytics:", e);
+        console.error("Error fetching wallet:", e);
+        setNotification('Failed to fetch wallet from backend. Please log in again.');
     }
-  };
+  }, [setWallet, setNotification]);
 
-  useEffect(() => {
-    if (isAuthenticated) {
-        fetchTrades();
-    }
-  }, [isAuthenticated]);
-
-  // WebSocket connection and data handling
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    const newSocket = io('http://localhost:3000');
-    setSocket(newSocket);
-
-    newSocket.on('latest_rates_update', (data) => {
-      // Assuming a base currency of USD for the main chart
-      if (data.base === 'USD' && data.conversion_rates.INR) {
-        const newRate = { rate: data.conversion_rates.INR, timestamp: Date.now() };
-        setLiveData(prevData => {
-          const updatedData = [...prevData, newRate];
-          if (updatedData.length > 50) updatedData.shift();
-          return updatedData;
-        });
-      }
-      setExchangeRates(data.conversion_rates);
-    });
-
-    newSocket.on('connect', () => {
-      console.log('Connected to WebSocket server');
-      // Initial request for rates
-      newSocket.emit('request_latest_rates', selectedBaseCurrency);
-    });
-    
-    // Requesting data on interval
-    const interval = setInterval(() => {
-        newSocket.emit('request_latest_rates', selectedBaseCurrency);
-    }, dataRefreshInterval);
-
-    return () => {
-      newSocket.disconnect();
-      clearInterval(interval);
-    };
-
-  }, [isAuthenticated, dataRefreshInterval, selectedBaseCurrency]);
-
-  // Trading algorithm for auto-trading
-  useEffect(() => {
-    if (!isAutoTradeActive || liveData.length < bollingerPeriod) return;
-
-    const lastPrice = liveData[liveData.length - 1].rate;
-    const { upper, lower } = bollinger[0];
-
-    // Simple Bollinger Bands logic for trading
-    if (lastPrice < lower) {
-      handlePlaceOrder({ action: 'Buy', currencyPair: 'USD/INR', quantity: 1 });
-    } else if (lastPrice > upper) {
-      handlePlaceOrder({ action: 'Sell', currencyPair: 'USD/INR', quantity: 1 });
-    }
-
-  }, [liveData, isAutoTradeActive, bollinger]);
-
-  const handlePlaceOrder = async ({ action, currencyPair, quantity }) => {
+  const handlePlaceOrder = useCallback(async ({ action, currencyPair, quantity }) => {
     if (!isAuthenticated) {
       setNotification('Please log in to place an order.');
       return;
@@ -815,7 +790,7 @@ const App = () => {
     };
 
     try {
-      const response = await fetch('http://localhost:3000/api/trades', {
+      const response = await fetch('http://localhost:5000/api/trades', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -827,6 +802,7 @@ const App = () => {
       if (response.ok) {
         setNotification(`${action} order placed successfully!`);
         await fetchTrades(); // Refresh the trade list after a successful trade
+        await fetchWallet(); // Refresh wallet
       } else {
         const errorData = await response.json();
         setNotification(`Failed to place ${action} order: ${errorData.error}`);
@@ -835,7 +811,107 @@ const App = () => {
       console.error("Error sending trade to backend:", e);
       setNotification(`Failed to connect to backend.`);
     }
+  }, [isAuthenticated, liveData, setNotification, fetchTrades, fetchWallet]);
+
+  // Auth check on load
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const storedUsername = localStorage.getItem('username');
+    if (token && storedUsername) {
+      setIsAuthenticated(true);
+      setUsername(storedUsername);
+    }
+  }, []);
+
+  const handleLoginSuccess = (user) => {
+    setIsAuthenticated(true);
+    setUsername(user);
+    localStorage.setItem('username', user);
+    localStorage.setItem('isAuthenticated', 'true');
+    setNotification('Login successful!');
+    fetchWallet();
+    fetchTrades();
   };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    setUsername(null);
+    localStorage.removeItem('token');
+    localStorage.removeItem('username');
+    localStorage.removeItem('isAuthenticated');
+    if (socket) {
+      socket.disconnect();
+    }
+    setNotification('Logged out successfully.');
+  };
+
+  // Fetching data from the backend
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token) {
+        fetchTrades();
+        fetchWallet();
+    }
+  }, [fetchTrades, fetchWallet]);
+
+  // WebSocket connection and data handling
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const newSocket = io('http://localhost:5000');
+    setSocket(newSocket);
+
+    newSocket.on('latest_rates_update', (data) => {
+      console.log('Received real-time data:', data);
+      // Assuming a base currency of USD for the main chart
+      if (data.base === 'USD' && data.conversion_rates.INR) {
+        const newRate = { rate: data.conversion_rates.INR, timestamp: Date.now() };
+        setLiveData(prevData => {
+          const updatedData = [...prevData, newRate];
+          if (updatedData.length > 50) updatedData.shift();
+          return updatedData;
+        });
+      }
+      setExchangeRates(data.conversion_rates);
+      setIsDataReady(true);
+    });
+
+    newSocket.on('connect', () => {
+      console.log('Connected to WebSocket server');
+    });
+    
+    newSocket.on('error', (message) => {
+        setNotification(`WebSocket error: ${message}`);
+        setIsDataReady(false);
+    });
+
+    return () => {
+      newSocket.disconnect();
+    };
+
+  }, [isAuthenticated]);
+
+  const [isAutoTradeActive, setIsAutoTradeActive] = useState(false);
+  const handleAutoTrade = useCallback(() => {
+    setIsAutoTradeActive(prev => !prev);
+  }, []);
+
+  // Trading algorithm for auto-trading
+  useEffect(() => {
+    if (!isAutoTradeActive || liveData.length < bollingerPeriod) return;
+
+    const lastPrice = liveData.length > 0 ? liveData[liveData.length - 1].rate : null;
+    if (!lastPrice) return;
+    const { upper, lower } = bollinger[0];
+
+    // Simple Bollinger Bands logic for trading
+    if (lastPrice < lower) {
+      handlePlaceOrder({ action: 'Buy', currencyPair: 'USD/INR', quantity: 1 });
+    } else if (lastPrice > upper) {
+      handlePlaceOrder({ action: 'Sell', currencyPair: 'USD/INR', quantity: 1 });
+    }
+
+  }, [liveData, isAutoTradeActive, bollinger, handlePlaceOrder]);
 
   const renderPage = () => {
     if (!isAuthenticated) {
@@ -852,13 +928,15 @@ const App = () => {
             trades={trades}
             volumeLimit={volumeLimit}
             isAutoTradeActive={isAutoTradeActive}
-            setIsAutoTradeActive={setIsAutoTradeActive}
+            setIsAutoTradeActive={handleAutoTrade}
             onPlaceOrder={handlePlaceOrder}
             totalVolume={totalVolume}
-            notification={notification}
             exchangeRates={exchangeRates}
             selectedBaseCurrency={selectedBaseCurrency}
             setSelectedBaseCurrency={setSelectedBaseCurrency}
+            socket={socket}
+            isDataReady={isDataReady}
+            wallet={wallet}
           />
         );
       case AppState.STRATEGIES:
@@ -868,7 +946,7 @@ const App = () => {
       case AppState.ANALYTICS:
         return <AnalyticsPage trades={trades} />;
       case AppState.SETTINGS:
-        return <SettingsPage volumeLimit={volumeLimit} setVolumeLimit={setVolumeLimit} dataRefreshInterval={dataRefreshInterval} setDataRefreshInterval={setDataRefreshInterval} />;
+        return <SettingsPage volumeLimit={volumeLimit} setVolumeLimit={setVolumeLimit} />;
       case AppState.PROFILE:
         return <ProfilePage username={username} trades={trades} />;
       default:

@@ -2,12 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import { AnimatePresence, motion } from 'framer-motion';
+import io from 'socket.io-client';
 
 // Register Chart.js components
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
-
-// Tailwind CSS is pre-configured, so we can use its classes directly.
-// The app uses a dark theme with custom colors.
 
 // A central data store for all app state
 const AppState = {
@@ -73,6 +71,52 @@ const Navbar = ({ activePage, setActivePage, username, onLogout }) => {
   );
 };
 
+// New component for visualizing multiple currency rates
+const CurrencyComparisonChart = ({ selectedBaseCurrency, exchangeRates }) => {
+    const labels = Object.keys(exchangeRates);
+    const chartData = {
+        labels: labels,
+        datasets: [{
+            label: `${selectedBaseCurrency} Exchange Rates`,
+            data: Object.values(exchangeRates),
+            borderColor: '#34d399',
+            backgroundColor: 'rgba(52, 211, 153, 0.2)',
+            tension: 0.4,
+            fill: false,
+        }],
+    };
+    
+    const chartOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: false,
+            },
+            tooltip: {
+                callbacks: {
+                    label: function(context) {
+                        return `${context.label}: ${context.raw.toFixed(4)}`;
+                    }
+                }
+            },
+        },
+        scales: {
+            x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } },
+            y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255, 255, 255, 0.1)' } }
+        },
+    };
+
+    return (
+        <div className="p-6 bg-gray-800 rounded-lg shadow-xl border border-gray-700">
+            <h2 className="text-xl font-semibold mb-4 text-green-400">Currency Exchange Rates</h2>
+            <div className="h-96">
+                <Line data={chartData} options={chartOptions} />
+            </div>
+        </div>
+    );
+};
+
 const TradingDashboard = ({
   liveData,
   sma,
@@ -83,7 +127,10 @@ const TradingDashboard = ({
   setIsAutoTradeActive,
   onPlaceOrder,
   totalVolume,
-  notification
+  notification,
+  exchangeRates,
+  selectedBaseCurrency,
+  setSelectedBaseCurrency
 }) => {
   const [orderQuantity, setOrderQuantity] = useState(1);
   const [currencyPair, setCurrencyPair] = useState('USD/INR');
@@ -96,7 +143,7 @@ const TradingDashboard = ({
     labels: liveData.map((d, i) => i + 1),
     datasets: [
       {
-        label: 'Live Price',
+        label: 'Live Price (USD/INR)',
         data: liveData.map((d) => d.rate),
         borderColor: '#34d399',
         backgroundColor: 'rgba(52, 211, 153, 0.2)',
@@ -162,7 +209,7 @@ const TradingDashboard = ({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         {/* Live Market Data Section */}
         <div className="col-span-1 md:col-span-2 p-6 bg-gray-800 rounded-lg shadow-xl border border-gray-700">
-          <h2 className="text-xl font-semibold mb-4 text-green-400">Live Market Data</h2>
+          <h2 className="text-xl font-semibold mb-4 text-green-400">Live Market Data (USD/INR)</h2>
           <div className="h-96">
             <Line data={chartData} options={chartOptions} />
           </div>
@@ -229,6 +276,24 @@ const TradingDashboard = ({
             </div>
           </div>
         </div>
+      </div>
+    
+      {/* New Currency Comparison Section */}
+      <div className="p-6 bg-gray-800 rounded-lg shadow-xl border border-gray-700 mb-8">
+          <h2 className="text-xl font-semibold mb-4 text-green-400">All Currency Exchange Rates</h2>
+          <div className="flex items-center space-x-4 mb-4">
+              <label className="block text-sm font-medium text-gray-300">Base Currency</label>
+              <select
+                  className="rounded-md bg-gray-700 border-gray-600 text-white shadow-sm focus:border-green-500 focus:ring-green-500"
+                  value={selectedBaseCurrency}
+                  onChange={(e) => setSelectedBaseCurrency(e.target.value)}
+              >
+                  {['USD', 'EUR', 'GBP', 'JPY', 'INR', 'CAD'].map(currency => (
+                      <option key={currency} value={currency}>{currency}</option>
+                  ))}
+              </select>
+          </div>
+          <CurrencyComparisonChart selectedBaseCurrency={selectedBaseCurrency} exchangeRates={exchangeRates} />
       </div>
 
       {/* Trade Blotter */}
@@ -576,6 +641,8 @@ const App = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [username, setUsername] = useState(null);
   const [liveData, setLiveData] = useState([]);
+  const [exchangeRates, setExchangeRates] = useState({});
+  const [selectedBaseCurrency, setSelectedBaseCurrency] = useState('USD');
   const [trades, setTrades] = useState([]);
   const [totalVolume, setTotalVolume] = useState(0);
   const [volumeLimit, setVolumeLimit] = useState(10000000);
@@ -583,6 +650,8 @@ const App = () => {
   const [dataRefreshInterval, setDataRefreshInterval] = useState(3000);
   const [notification, setNotification] = useState('');
 
+  const [socket, setSocket] = useState(null);
+  
   // Trading logic state
   const smaPeriod = 14;
   const smaHistory = liveData.slice(-smaPeriod);
@@ -605,12 +674,10 @@ const App = () => {
   // Auth check on load
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (token) {
-      // For a real app, you would verify the token with the backend
-      // For this simulation, we assume it's valid if it exists
-      const usernameFromToken = localStorage.getItem('username'); // Storing username for display
+    const storedUsername = localStorage.getItem('username');
+    if (token && storedUsername) {
       setIsAuthenticated(true);
-      setUsername(usernameFromToken);
+      setUsername(storedUsername);
     }
   }, []);
 
@@ -626,6 +693,9 @@ const App = () => {
     setUsername(null);
     localStorage.removeItem('token');
     localStorage.removeItem('username');
+    if (socket) {
+      socket.disconnect();
+    }
     setNotification('Logged out successfully.');
   };
 
@@ -671,32 +741,43 @@ const App = () => {
     }
   }, [isAuthenticated]);
 
-  // Simulate real-time data from API and auto-trade
+  // WebSocket connection and data handling
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const fetchData = async () => {
-      try {
-        const response = await fetch('https://api.exchangerate-api.com/v4/latest/USD');
-        const data = await response.json();
-        const rate = data.rates['INR'];
+    const newSocket = io('http://localhost:3000');
+    setSocket(newSocket);
+
+    newSocket.on('latest_rates_update', (data) => {
+      // Assuming a base currency of USD for the main chart
+      if (data.base === 'USD' && data.conversion_rates.INR) {
+        const newRate = { rate: data.conversion_rates.INR, timestamp: Date.now() };
         setLiveData(prevData => {
-          const newRate = { rate: rate + (Math.random() - 0.5) * 0.1, timestamp: Date.now() };
           const updatedData = [...prevData, newRate];
-          if (updatedData.length > 50) updatedData.shift(); // Keep last 50 data points
+          if (updatedData.length > 50) updatedData.shift();
           return updatedData;
         });
-      } catch (error) {
-        console.error("Error fetching data:", error);
       }
-    };
+      setExchangeRates(data.conversion_rates);
+    });
 
+    newSocket.on('connect', () => {
+      console.log('Connected to WebSocket server');
+      // Initial request for rates
+      newSocket.emit('request_latest_rates', selectedBaseCurrency);
+    });
+    
+    // Requesting data on interval
     const interval = setInterval(() => {
-      fetchData();
+        newSocket.emit('request_latest_rates', selectedBaseCurrency);
     }, dataRefreshInterval);
 
-    return () => clearInterval(interval);
-  }, [dataRefreshInterval, isAuthenticated]);
+    return () => {
+      newSocket.disconnect();
+      clearInterval(interval);
+    };
+
+  }, [isAuthenticated, dataRefreshInterval, selectedBaseCurrency]);
 
   // Trading algorithm for auto-trading
   useEffect(() => {
@@ -775,6 +856,9 @@ const App = () => {
             onPlaceOrder={handlePlaceOrder}
             totalVolume={totalVolume}
             notification={notification}
+            exchangeRates={exchangeRates}
+            selectedBaseCurrency={selectedBaseCurrency}
+            setSelectedBaseCurrency={setSelectedBaseCurrency}
           />
         );
       case AppState.STRATEGIES:

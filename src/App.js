@@ -352,7 +352,7 @@ const TradingDashboard = ({
                 {Object.keys(wallet).map(currency => (
                     <div key={currency} className="bg-gray-700 p-3 rounded-lg flex justify-between items-center">
                         <span className="text-gray-300">{currency}</span>
-                        <span className="font-bold text-white">${wallet[currency].toFixed(2)}</span>
+                        <span className="font-bold text-white">{wallet[currency].toFixed(2)}</span>
                     </div>
                 ))}
             </div>
